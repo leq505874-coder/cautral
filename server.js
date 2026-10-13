@@ -1,17 +1,18 @@
-import "dotenv/config";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
+import { streamGemini } from "./gemini.js";
+
+// Đọc file .env khi chạy trên máy (trên Render thì biến môi trường đã có sẵn)
+try {
+  process.loadEnvFile?.();
+} catch {}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MODEL = process.env.CAUTRAL_MODEL || "claude-sonnet-5-5";
-
-const client = process.env.ANTHROPIC_API_KEY
-  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  : null;
+const API_KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
 const BASE =
   "Bạn là CAUTRAL, một trợ lý AI thân thiện. Mặc định trả lời bằng tiếng Việt, " +
@@ -53,16 +54,14 @@ app.use(express.json({ limit: "2mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, model: MODEL, configured: Boolean(client) });
+  res.json({ ok: true, model: MODEL, configured: Boolean(API_KEY) });
 });
 
 app.post("/api/chat", async (req, res) => {
   const { mode = "chat", messages } = req.body ?? {};
 
-  if (!client) {
-    return res
-      .status(500)
-      .json({ error: "Chưa cấu hình ANTHROPIC_API_KEY trong file .env" });
+  if (!API_KEY) {
+    return res.status(500).json({ error: "Chưa cấu hình GEMINI_API_KEY trên máy chủ." });
   }
   if (!MODES[mode]) {
     return res.status(400).json({ error: "Chế độ không hợp lệ" });
@@ -93,22 +92,25 @@ app.post("/api/chat", async (req, res) => {
   });
 
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const ac = new AbortController();
+  // Người dùng đóng trang giữa chừng thì dừng gọi AI
+  res.on("close", () => {
+    if (!res.writableFinished) ac.abort();
+  });
 
   try {
-    const stream = client.messages.stream({
+    for await (const text of streamGemini({
+      apiKey: API_KEY,
       model: MODEL,
-      max_tokens: 4096,
       system: MODES[mode].system,
       messages: clean,
-    });
-
-    stream.on("text", (text) => send({ text }));
-    req.on("close", () => stream.abort());
-
-    await stream.finalMessage();
+      signal: ac.signal,
+    })) {
+      send({ text });
+    }
     send({ done: true });
   } catch (err) {
-    if (!res.writableEnded) {
+    if (!ac.signal.aborted && !res.writableEnded) {
       send({ error: err?.message || "Lỗi khi gọi AI" });
     }
   } finally {
@@ -117,6 +119,6 @@ app.post("/api/chat", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`CAUTRAL đang chạy tại http://localhost:${PORT}`);
-  if (!client) console.warn("⚠️  Chưa có ANTHROPIC_API_KEY. Hãy tạo file .env (xem .env.example).");
+  console.log(`CAUTRAL đang chạy tại http://localhost:${PORT} (model: ${MODEL})`);
+  if (!API_KEY) console.warn("⚠️  Chưa có GEMINI_API_KEY.");
 });
