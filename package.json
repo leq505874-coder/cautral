@@ -1,0 +1,16 @@
+{
+  "name": "cautral",
+  "version": "1.0.0",
+  "description": "CAUTRAL - Ứng dụng web AI: chat, viết nội dung, trợ lý học tập, phân tích dữ liệu",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.60.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
